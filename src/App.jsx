@@ -43,10 +43,10 @@ const API_BASE = API_URL_ENV
   ? API_URL_ENV.replace(/\/+$/, "").endsWith("/api")
     ? API_URL_ENV.replace(/\/+$/, "")
     : API_URL_ENV.replace(/\/+$/, "") + "/api"
-  : "/api";
+  : "http://localhost:5000/api";
 const IS_PROD = typeof import.meta !== "undefined" && import.meta.env && import.meta.env.MODE === "production";
 if (IS_PROD && !API_URL_ENV) {
-  
+  throw new Error("VITE_API_URL is required in production. Set it in hosting env.");
 }
 const api = (p) => API_BASE + p;
 
@@ -499,4 +499,3 @@ export default function App(){
     </div>
   );
 }
-// v2 
