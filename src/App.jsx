@@ -209,7 +209,7 @@ function Home({setPage}){
           <button onClick={()=>setPage("bonuses")} style={{padding:"16px 36px",borderRadius:"14px",border:"2px solid rgba(139,92,246,0.3)",background:"transparent",color:"#a78bfa",fontSize:"15px",fontWeight:800,letterSpacing:"2px",cursor:"pointer",textTransform:"uppercase",minHeight:"52px"}}>CLAIM BONUSES</button>
         </div>
       </div>
-      <Stats data={SAMPLE}/>
+      <Stats data={data}/>
       <GameShowcase/>
       <Platforms/>
       <div style={{textAlign:"center",padding:"0 16px 60px",position:"relative",zIndex:1}}>
