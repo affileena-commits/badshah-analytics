@@ -24,18 +24,8 @@ const PRIZES = {1:400,2:200,3:140,4:60,5:60,6:60,7:50,8:50,9:50,10:50};
 const TOTAL_POOL = Object.values(PRIZES).reduce((a,b)=>a+b,0);
 const fmt = n=>"$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 
-const SAMPLE = Array.from({length:20},(_,i)=>{
-  const names=["ki****26","SirMo****rma","je****520","ra****99","de****ak","vi****sh","gu****ep","sa****11","pr****ik","am****77","ro****42","su****nd","ma****jj","ha****19","ni****88","aj****kr","pa****lv","di****33","sh****an","ta****06"];
-  const wagers=[21705.9,16034.1,7386.19,5200,4100.5,3800,3200.75,2900,2500,2100.3,1950,1820.5,1700,1580.25,1420,1300,1180.75,1050,980.5,870];
-  return {rank:i+1,user:names[i],wagered:wagers[i]};
-});
-
-// ─── SECURITY: SHA-256 hash (kept for reference only — JWT is used now) ───
-async function hashStr(str){
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
-  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
-}
-const ADMIN_HASH = "41c991eb6a66242c0454191244278183ce58cf4a6bcd372f799e4b9cc01886af";
+// ─── SECURITY ───
+// Auth: JWT via backend /admin/login (PIN → token)
 
 // ─── FINAL: Vite ENV + API Base ───
 const API_URL_ENV = (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) || "";
@@ -43,21 +33,9 @@ const API_BASE = API_URL_ENV
   ? API_URL_ENV.replace(/\/+$/, "").endsWith("/api")
     ? API_URL_ENV.replace(/\/+$/, "")
     : API_URL_ENV.replace(/\/+$/, "") + "/api"
-  : "http://localhost:5000/api";
+  : "/api";
 const IS_PROD = typeof import.meta !== "undefined" && import.meta.env && import.meta.env.MODE === "production";
-if (IS_PROD && !API_URL_ENV) {
-  throw new Error("VITE_API_URL is required in production. Set it in hosting env.");
-}
 const api = (p) => API_BASE + p;
-
-// ─── SECURITY: Anti-inspect (DEV only — production mein disabled) ───
-if(typeof window!=="undefined"&&!IS_PROD){
-  const block=e=>e.preventDefault();
-  document.addEventListener("contextmenu",block);
-  document.addEventListener("keydown",e=>{
-    if(e.key==="F12"||(e.ctrlKey&&e.shiftKey&&["I","J","C"].includes(e.key))||(e.ctrlKey&&(e.key==="u"||e.key==="s")))e.preventDefault();
-  });
-}
 
 // ─── SECURITY: Rate limiter ───
 const rateLimit=(()=>{
@@ -71,33 +49,8 @@ const rateLimit=(()=>{
 })();
 
 // ─── SECURITY: Input sanitizer ───
-const sanitize=s=>s.replace(/[<>"'&\\;(){}]/g,"").trim().slice(0,30);
+const sanitize=s=>String(s??"").replace(/[<>"'&\\;(){}]/g,"").trim().slice(0,30);
 
-// ─── API-READY: Change this URL when backend is ready ───
-// ─── FIX #2: Proper CSV parser (handles commas in names, quotes) ───
-function parseCSVText(text){
-  const lines=[];let cur="",inQ=false;
-  for(let i=0;i<text.length;i++){
-    const c=text[i];
-    if(c==='"'){if(inQ&&text[i+1]==='"'){cur+='"';i++}else inQ=!inQ}
-    else if(c==="\n"&&!inQ){lines.push(cur);cur=""}
-    else if(c==="\r"&&!inQ){}
-    else cur+=c;
-  }
-  if(cur.trim())lines.push(cur);
-  return lines.map(line=>{
-    const cols=[];let f="",q=false;
-    for(let i=0;i<line.length;i++){
-      const c=line[i];
-      if(c==='"'){if(q&&line[i+1]==='"'){f+='"';i++}else q=!q}
-      else if(c===","&&!q){cols.push(f.trim());f=""}
-      else f+=c;
-    }
-    cols.push(f.trim());return cols;
-  });
-}
-
-// ─── API URL: Backend lagao toh yahan URL daalo ───
 // ─── API helper: api("/leaderboard") → full URL ───
 
 const CSS=`
@@ -198,7 +151,7 @@ function Platforms(){
   );
 }
 
-function Home({setPage}){
+function Home({setPage,data,lbStatus}){
   return(
     <div>
       <div style={{position:"relative",zIndex:1,textAlign:"center",padding:"60px 16px 50px",background:"radial-gradient(ellipse at center top,rgba(139,92,246,0.12) 0%,transparent 60%)"}}>
@@ -209,6 +162,8 @@ function Home({setPage}){
           <button onClick={()=>setPage("bonuses")} style={{padding:"16px 36px",borderRadius:"14px",border:"2px solid rgba(139,92,246,0.3)",background:"transparent",color:"#a78bfa",fontSize:"15px",fontWeight:800,letterSpacing:"2px",cursor:"pointer",textTransform:"uppercase",minHeight:"52px"}}>CLAIM BONUSES</button>
         </div>
       </div>
+      {lbStatus?.loading&&<div style={{textAlign:"center",color:"#64748b",padding:"20px",fontSize:"14px"}}>Loading leaderboard data...</div>}
+      {lbStatus?.error&&<div style={{textAlign:"center",color:"#f87171",padding:"12px 16px",fontSize:"13px"}}>{lbStatus.error}</div>}
       <Stats data={data}/>
       <GameShowcase/>
       <Platforms/>
@@ -223,11 +178,17 @@ function Home({setPage}){
   );
 }
 
-function Leaderboard({data,isMobile}){
+function Leaderboard({data,isMobile,onRefresh,lbStatus}){
   const top3=data.slice(0,3);const rest=data.slice(3);
   const pc={1:["rgba(255,215,0,0.15)","rgba(255,215,0,0.3)","#FFD700","1st"],2:["rgba(192,192,192,0.1)","rgba(192,192,192,0.2)","#C0C0C0","2nd"],3:["rgba(205,127,50,0.1)","rgba(205,127,50,0.2)","#CD7F32","3rd"]};
   return(
     <div style={{position:"relative",zIndex:1,padding:"30px 16px 100px",maxWidth:"1000px",margin:"0 auto"}}>
+      <div style={{display:"flex",justifyContent:"center",gap:"10px",marginBottom:"14px"}}>
+        <button onClick={()=>onRefresh&&onRefresh(true)} style={{padding:"12px 18px",borderRadius:"12px",border:"1px solid rgba(34,211,238,0.2)",background:"rgba(34,211,238,0.08)",color:"#22d3ee",fontWeight:800,fontSize:"13px",cursor:"pointer",letterSpacing:"1px"}}>{lbStatus?.loading?"LOADING...":"REFRESH DATA"}</button>
+      </div>
+      {lbStatus?.loading&&<div style={{textAlign:"center",color:"#64748b",marginBottom:"12px",fontSize:"13px"}}>Loading fresh data...</div>}
+      {lbStatus?.error&&<div style={{textAlign:"center",color:"#f87171",marginBottom:"12px",fontSize:"13px",padding:"8px",borderRadius:"8px",background:"rgba(248,113,113,0.08)"}}>{lbStatus.error}</div>}
+      {!lbStatus?.loading&&data.length===0&&!lbStatus?.error&&<div style={{textAlign:"center",color:"#64748b",padding:"40px 16px",fontSize:"15px"}}>No leaderboard data yet. Admin: set Google Sheet URL and click SAVE & REFRESH.</div>}
       <div style={{textAlign:"center",marginBottom:"30px",padding:"32px 16px",borderRadius:"20px",background:"radial-gradient(ellipse at center,rgba(34,211,238,0.08) 0%,rgba(10,14,23,0.9) 70%)",border:"1px solid rgba(34,211,238,0.15)"}} className="glow">
         <div style={{fontSize:"clamp(40px,10vw,72px)",fontWeight:900,color:"#22d3ee",textShadow:"0 0 40px rgba(34,211,238,0.4)",lineHeight:1}}>${TOTAL_POOL.toLocaleString()}</div>
         <div style={{fontSize:"16px",fontWeight:700,color:"#94a3b8",letterSpacing:"4px",textTransform:"uppercase",marginTop:"8px"}}>Weekly Leaderboard</div>
@@ -288,8 +249,8 @@ function Bonuses(){
     setError("");
     const clean=sanitize(username);
     if(!clean||clean.length<3){setError("Username must be at least 3 characters");return;}
-    if(cooldown){setError("Please wait before submitting again");return;}
-    if(!rateLimit("bonus_req",2)){setError("Too many requests. Try again in 1 minute.");return;}
+    if(cooldown){setError("Please wait 60 seconds before submitting again");return;}
+    if(!rateLimit("bonus_req_"+clean.toLowerCase(),2)){setError("Too many requests. Try again in 1 minute.");return;}
     setLoading(true);
     try{
       const res=await fetch(api("/bonus/request"),{
@@ -301,7 +262,7 @@ function Bonuses(){
       if(!res.ok){setError(data.error||"Request failed");setLoading(false);return;}
       setRequestId(data.requestId||"");
       setSubmitted(true);setCooldown(true);setUsername("");
-      setTimeout(()=>setCooldown(false),30000);
+      setTimeout(()=>setCooldown(false),60000);
       setTimeout(()=>{setSubmitted(false);setRequestId("")},8000);
     }catch(e){
       setError("Server connection failed. Try again later.");
@@ -373,7 +334,7 @@ function Bonuses(){
         </div>
         {error&&<div style={{marginTop:"8px",fontSize:"13px",color:"#f87171",fontWeight:600}}>{error}</div>}
         <button style={{...sty.btn,opacity:(cooldown||loading)?0.5:1}} onClick={handleSubmit} disabled={cooldown||loading}>
-          {loading?"Sending...":cooldown?"Please wait 30s...":submitted?"Request Sent!":"SUBMIT REQUEST"}
+          {loading?"Sending...":cooldown?"Please wait 60s...":submitted?"Request Sent!":"SUBMIT REQUEST"}
         </button>
         {submitted&&<div style={{marginTop:"12px",padding:"12px 16px",borderRadius:"10px",background:"rgba(34,211,238,0.1)",border:"1px solid rgba(34,211,238,0.2)",fontSize:"13px",color:"#22d3ee",fontWeight:600}}>
           Request submitted! Bonus will be set within 24hrs.
@@ -398,12 +359,20 @@ function Admin({sheetUrl,setSheetUrl,onFetch}){
     }catch(e){setErr("Server connection failed");setPin("")}
   };
   const updateSource=async()=>{
-    if(token){
-      try{
-        await fetch(api("/admin/update-source"),{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:JSON.stringify({sheetUrl})});
-      }catch(e){}
-    }
-    onFetch();
+    if(!token)return;
+    setErr("");
+    const cleanUrl=(sheetUrl||"").trim();
+    if(!cleanUrl){setErr("Sheet URL required");return;}
+    try{
+      const res1=await fetch(api("/admin/update-source"),{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token,"Cache-Control":"no-cache"},body:JSON.stringify({sheetUrl:cleanUrl})});
+      const j1=await res1.json().catch(()=>({}));
+      if(!res1.ok||!j1.success){setErr(j1.error||("Update failed ("+res1.status+")"));return;}
+      const res2=await fetch(api("/admin/refresh-leaderboard"),{method:"POST",headers:{"Authorization":"Bearer "+token,"Cache-Control":"no-cache","Content-Type":"application/json"}});
+      const j2=await res2.json().catch(()=>({}));
+      if(!res2.ok||!j2.success){setErr(j2.error||("Refresh failed ("+res2.status+")"));return;}
+      await onFetch(true);
+      setErr("");
+    }catch(e){setErr("Server connection failed")}
   };
   const fetchBonusReqs=async()=>{
     if(!token)return;
@@ -434,9 +403,9 @@ function Admin({sheetUrl,setSheetUrl,onFetch}){
     </div>
     {tab==="data"&&<>
       <label style={{fontSize:"11px",color:"#64748b",letterSpacing:"1px",fontWeight:700,display:"block",marginBottom:"6px"}}>GOOGLE SHEET URL</label>
-      <input style={sty.input} placeholder="Paste published CSV URL..." value={sheetUrl} onChange={e=>setSheetUrl(e.target.value)}/>
-      <p style={{fontSize:"10px",color:"#475569",marginTop:"4px",marginBottom:"10px"}}>Columns: rank, user, wagered. Publish as CSV.</p>
-      <button style={sty.btn} onClick={updateSource}>FETCH DATA</button>
+      <input style={sty.input} placeholder="Paste Google Sheet URL (share as Anyone with link)..." value={sheetUrl} onChange={e=>setSheetUrl(e.target.value)}/>
+      <p style={{fontSize:"10px",color:"#475569",marginTop:"4px",marginBottom:"10px"}}>Normal Sheet URL works. Tab (gid) auto-detected. Columns: rank, user_name, wagered.</p>
+      <button style={sty.btn} onClick={updateSource}>SAVE & REFRESH</button>
     </>}
     {tab==="bonus"&&<>
         <button onClick={fetchBonusReqs} style={{...sty.btn,marginTop:0,marginBottom:"12px",padding:"10px",fontSize:"12px"}}>{loadingReqs?"Loading...":"REFRESH"}</button>
@@ -460,7 +429,8 @@ function Admin({sheetUrl,setSheetUrl,onFetch}){
 
 export default function App(){
   const isMobile=useIsMobile();
-  const[page,setPage]=useState("home");const[data,setData]=useState(SAMPLE);const[sheetUrl,setSheetUrl]=useState("");
+  const[page,setPage]=useState("home");const[data,setData]=useState([]);const[sheetUrl,setSheetUrl]=useState("");
+  const[lbStatus,setLbStatus]=useState({loading:false,error:""});
   // FIX F3: Admin hidden in production — triple-tap bottom-right corner or type "badshah" to reveal
   const[showAdmin,setShowAdmin]=useState(!IS_PROD);
   useEffect(()=>{
@@ -470,13 +440,49 @@ export default function App(){
     window.addEventListener("keydown",handler);
     return()=>window.removeEventListener("keydown",handler);
   },[]);
-  const fetchSheet=useCallback(async()=>{
-    try{
-      const res=await fetch(api("/leaderboard"));
-      const json=await res.json();
-      if(json.success&&json.data.length>0)setData(json.data);
-    }catch(e){console.log("Leaderboard fetch failed:",e)}
+  useEffect(()=>{
+    if(!IS_PROD)return;
+    let taps=0;let tmr=null;
+    const onTap=(e)=>{
+      const x=e.clientX??(e.touches&&e.touches[0]?.clientX);
+      const y=e.clientY??(e.touches&&e.touches[0]?.clientY);
+      if(x==null||y==null)return;
+      if(x>window.innerWidth-80&&y>window.innerHeight-80){
+        taps++;if(tmr)clearTimeout(tmr);tmr=setTimeout(()=>(taps=0),700);
+        if(taps>=3){setShowAdmin(true);taps=0;clearTimeout(tmr)}
+      }
+    };
+    window.addEventListener("click",onTap);
+    window.addEventListener("touchstart",onTap,{passive:true});
+    return()=>{window.removeEventListener("click",onTap);window.removeEventListener("touchstart",onTap);if(tmr)clearTimeout(tmr)};
   },[]);
+  const fetchSheet=useCallback(async(force=false)=>{
+    setLbStatus({loading:true,error:""});
+    try{
+      const base=api("/leaderboard");
+      const url=base+(force?(base.includes("?")?"&":"?")+"t="+Date.now():"");
+      const res=await fetch(url,{cache:"no-store",headers:{"Accept":"application/json","Cache-Control":"no-cache, no-store, must-revalidate","Pragma":"no-cache"}});
+      const ct=(res.headers.get("content-type")||"").toLowerCase();
+      if(!ct.includes("application/json")){
+        const text=await res.text();
+        setLbStatus({loading:false,error:"Server returned non-JSON ("+res.status+")"});
+        console.error("Non-JSON:",res.status,text.slice(0,400));
+        return;
+      }
+      const json=await res.json();
+      if(res.ok&&json?.success&&Array.isArray(json.data)){
+        setData(json.data);
+        setLbStatus({loading:false,error:""});
+      }else{
+        setLbStatus({loading:false,error:json?.error||"No data returned"});
+        console.error("Bad payload:",json);
+      }
+    }catch(e){
+      setLbStatus({loading:false,error:"Server connection failed"});
+      console.error("Fetch failed:",e);
+    }
+  },[]);
+  useEffect(()=>{fetchSheet(true);},[fetchSheet]);
   return(
     <div style={{minHeight:"100vh",background:"#0a0e17",color:"#e2e8f0",fontFamily:"Rajdhani,Segoe UI,sans-serif",position:"relative"}}>
       <style>{CSS}</style>
@@ -486,8 +492,8 @@ export default function App(){
       {isMobile&&<div style={{textAlign:"center",padding:"12px 0",background:"rgba(10,14,23,0.9)",borderBottom:"1px solid rgba(139,92,246,0.1)"}}>
         <span onClick={()=>{setPage("home");window.scrollTo(0,0)}} style={{fontSize:"20px",fontWeight:800,letterSpacing:"3px",background:"linear-gradient(135deg,#a78bfa,#22d3ee)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",cursor:"pointer",fontFamily:"Orbitron,sans-serif"}}>BADSHAH</span>
       </div>}
-      {page==="home"&&<Home setPage={setPage}/>}
-      {page==="leaderboard"&&<Leaderboard data={data} isMobile={isMobile}/>}
+      {page==="home"&&<Home setPage={setPage} data={data} lbStatus={lbStatus}/>}
+      {page==="leaderboard"&&<Leaderboard data={data} isMobile={isMobile} onRefresh={fetchSheet} lbStatus={lbStatus}/>}
       {page==="bonuses"&&<Bonuses/>}
       <footer style={{position:"relative",zIndex:1,textAlign:"center",padding:"30px 16px 100px",borderTop:"1px solid rgba(139,92,246,0.1)",marginTop:"30px"}}>
         <div style={{fontSize:"18px",fontWeight:800,fontFamily:"Orbitron,sans-serif",background:"linear-gradient(135deg,#a78bfa,#22d3ee)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:"10px",display:"inline-block"}}>BADSHAH ANALYTICS</div>
