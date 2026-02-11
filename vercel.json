@@ -1,1 +1,1 @@
-{"rewrites":[{"source":"/api/(.*)", "destination":"http://188.166.115.61:5000/api/$1"}]} 
+{"rewrites":[{"source":"/api/:path*","destination":"http://188.166.115.61:5000/api/:path*"}]} 
